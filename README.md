@@ -252,24 +252,15 @@ managed from any namespace which holds a suitable secret.
 
 ## Requirements and Setup
 
-The recommended way to install the operator is the Helm chart contained in this repository, in the [chart](chart) folder:
+The recommended deployment method is to use the [Helm chart](https://github.com/sap/kafka-operator-helm):
 
 ```bash
-git clone https://github.com/sap/kafka-operator.git
-cd kafka-operator
-
-helm upgrade -i kafka-operator chart --namespace kafka-operator --create-namespace
+helm upgrade -i kafka-operator oci://ghcr.io/sap/kafka-operator-helm/kafka-operator
 ```
 
-The chart deploys the operator (deployment, service account, RBAC, pod disruption budget) and installs the `Topic` custom
-resource definition from the chart's `crds` folder.
+## Documentation
 
-Note that Helm does not update CRDs contained in the `crds` folder on `helm upgrade`. When upgrading to a version which
-changed the custom resource definition, apply it explicitly:
-
-```bash
-kubectl apply -f crds/kafka.cs.sap.com_topics.yaml
-```
+The API reference is here: [https://pkg.go.dev/github.com/sap/kafka-operator](https://pkg.go.dev/github.com/sap/kafka-operator).
 
 ## Support, Feedback, Contributing
 
