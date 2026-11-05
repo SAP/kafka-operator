@@ -28,7 +28,7 @@ type client struct {
 var _ kafka.Client = &client{}
 
 func NewClient(id string, connectionDetails *api.ConnectionDetails) (kafka.Client, error) {
-	c, err := newAdminClient(id, connectionDetails)
+	c, err := getCachedAdminClient(id, connectionDetails)
 	if err != nil {
 		return nil, err
 	}
