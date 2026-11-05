@@ -123,6 +123,18 @@ func init() {
 			for digest, item := range cachedAdminClients {
 				if now.Sub(item.lastUsedAt) > 6*time.Hour {
 					delete(cachedAdminClients, digest)
+					go func() {
+						done := make(chan struct{})
+						go func() {
+							item.cli.Close()
+							close(done)
+						}()
+						select {
+						case <-done:
+						case <-time.After(60 * time.Second):
+							panic(fmt.Sprintf("timed out closing admin client"))
+						}
+					}()
 				}
 			}
 			mu.Unlock()
