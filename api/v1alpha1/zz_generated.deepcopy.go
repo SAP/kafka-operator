@@ -21,6 +21,10 @@ func (in *CommonStatus) DeepCopyInto(out *CommonStatus) {
 		in, out := &in.LastObservedAt, &out.LastObservedAt
 		*out = (*in).DeepCopy()
 	}
+	if in.PendingSince != nil {
+		in, out := &in.PendingSince, &out.PendingSince
+		*out = (*in).DeepCopy()
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))
