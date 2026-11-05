@@ -13,6 +13,8 @@ import (
 type CommonStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration"`
 	LastObservedAt     *metav1.Time       `json:"lastObservedAt,omitempty"`
+	PendingGeneration  int64              `json:"pendingGeneration,omitempty"`
+	PendingSince       *metav1.Time       `json:"pendingSince,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 }
 

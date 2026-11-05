@@ -37,6 +37,7 @@ func newClient(id string, connectionDetails *api.ConnectionDetails) (*kgo.Client
 	opts := []kgo.Opt{
 		kgo.SeedBrokers(connectionDetails.Brokers...),
 		kgo.ClientID(id),
+		kgo.MetadataMinAge(1 * time.Second),
 	}
 
 	if connectionDetails.CaBundle != "" || connectionDetails.ClientCertificate != "" || connectionDetails.ClientKey != "" {

@@ -10,6 +10,7 @@ import (
 )
 
 type Client interface {
+	ExistsTopic(ctx context.Context, name string) (bool, error)
 	ReadTopic(ctx context.Context, name string) (*Topic, error)
 	CreateTopic(ctx context.Context, name string, partitions int32, replicas int16, configs map[string]string) error
 	UpdateTopicPartitions(ctx context.Context, topic *Topic, partitions int32) (bool, error)

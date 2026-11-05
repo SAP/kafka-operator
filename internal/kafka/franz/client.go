@@ -35,6 +35,24 @@ func NewClient(id string, connectionDetails *api.ConnectionDetails) (kafka.Clien
 	return &client{c: c}, nil
 }
 
+func (c *client) ExistsTopic(ctx context.Context, name string) (bool, error) {
+	details, err := c.c.ListTopicsWithInternal(ctx)
+	if err != nil {
+		return false, fmt.Errorf("error listing topics: %w", err)
+	}
+	detail, ok := details[name]
+	if !ok {
+		return false, nil
+	}
+	if detail.Err != nil {
+		return false, fmt.Errorf("error loading topic %s: %w", name, detail.Err)
+	}
+	if detail.Topic != name {
+		panic(fmt.Sprintf("this should never happen: topic name mismatch, expected %s, got %s", name, detail.Topic))
+	}
+	return true, nil
+}
+
 func (c *client) ReadTopic(ctx context.Context, name string) (*kafka.Topic, error) {
 	details, err := c.c.ListTopicsWithInternal(ctx)
 	if err != nil {

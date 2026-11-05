@@ -34,11 +34,12 @@ import (
 )
 
 type Reconciler struct {
-	name          string
-	finalizer     string
-	fieldOwner    string
-	client        client.Client
-	eventRecorder record.EventRecorder
+	name           string
+	finalizer      string
+	fieldOwner     string
+	pendingTimeout time.Duration
+	client         client.Client
+	eventRecorder  record.EventRecorder
 }
 
 var _ reconcile.Reconciler = &Reconciler{}
@@ -48,11 +49,12 @@ func NewReconciler(name string, clnt client.Client, eventRecorder record.EventRe
 	fieldOwner := name
 
 	return &Reconciler{
-		name:          name,
-		finalizer:     finalizer,
-		fieldOwner:    fieldOwner,
-		client:        client.WithFieldOwner(clnt, fieldOwner),
-		eventRecorder: eventRecorder,
+		name:           name,
+		finalizer:      finalizer,
+		fieldOwner:     fieldOwner,
+		pendingTimeout: 10 * time.Second,
+		client:         client.WithFieldOwner(clnt, fieldOwner),
+		eventRecorder:  eventRecorder,
 	}
 }
 
@@ -188,9 +190,38 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (resul
 	}
 
 	// read existing topic
-	tp, err := cli.ReadTopic(ctx, name)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("error reading topic %s: %w", name, err)
+	var tp *kafka.Topic
+	var tpExists bool
+	if topic.DeletionTimestamp.IsZero() || topic.Status.PendingSince != nil {
+		tp, err = cli.ReadTopic(ctx, name)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("error reading topic %s: %w", name, err)
+		}
+		tpExists = tp != nil
+	} else {
+		tpExists, err = cli.ExistsTopic(ctx, name)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("error checking existence of topic %s: %w", name, err)
+		}
+	}
+
+	// wait for pending operations to complete or timeout;
+	// the pending state is started after each successful creation or update operation on the topic;
+	// the client might cache kafka metadata, so the next reconcile iteration might still see the old state;
+	// hence we check that the state the client sees is in sync with the desired state before proceeding;
+	// to avoid deadlocks or indefinite waiting, we enforce a timeout on pending operations
+	if topic.Status.PendingSince != nil {
+		if now.Sub(topic.Status.PendingSince.Time) > r.pendingTimeout {
+			topic.Status.PendingGeneration = 0
+			topic.Status.PendingSince = nil
+			return ctrl.Result{}, fmt.Errorf("pending operation timed out after %s", r.pendingTimeout)
+		} else {
+			if tp == nil || topic.Status.PendingGeneration == topic.Generation && !isTopicInSync(tp, partitions, replicas, configs) {
+				return ctrl.Result{RequeueAfter: 100 * time.Millisecond}, nil
+			}
+			topic.Status.PendingGeneration = 0
+			topic.Status.PendingSince = nil
+		}
 	}
 
 	if topic.DeletionTimestamp.IsZero() {
@@ -206,6 +237,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (resul
 				return ctrl.Result{}, fmt.Errorf("error creating topic %s: %w", name, err)
 			}
 			topic.Status.State = cskafkav1alpha1.TopicStateInProgress
+			topic.Status.PendingGeneration = topic.Generation
+			topic.Status.PendingSince = &now
 			topic.Status.SetReadyCondition(metav1.ConditionFalse, cskafkav1alpha1.TopicReadyReasonProcessing, "Topic created successfully")
 			return ctrl.Result{RequeueAfter: 100 * time.Millisecond}, nil
 		} else {
@@ -217,6 +250,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (resul
 				return ctrl.Result{}, fmt.Errorf("error updating partitions for topic %s: %w", name, err)
 			} else if updated {
 				topic.Status.State = cskafkav1alpha1.TopicStateInProgress
+				topic.Status.PendingGeneration = topic.Generation
+				topic.Status.PendingSince = &now
 				topic.Status.SetReadyCondition(metav1.ConditionFalse, cskafkav1alpha1.TopicReadyReasonProcessing, "Topic updated successfully")
 				return ctrl.Result{RequeueAfter: 100 * time.Millisecond}, nil
 			}
@@ -225,6 +260,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (resul
 				return ctrl.Result{}, fmt.Errorf("error updating topic replicas for topic %s: %w", name, err)
 			} else if updated {
 				topic.Status.State = cskafkav1alpha1.TopicStateInProgress
+				topic.Status.PendingGeneration = topic.Generation
+				topic.Status.PendingSince = &now
 				topic.Status.SetReadyCondition(metav1.ConditionFalse, cskafkav1alpha1.TopicReadyReasonProcessing, "Topic updated successfully")
 				return ctrl.Result{RequeueAfter: 100 * time.Millisecond}, nil
 			}
@@ -233,6 +270,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (resul
 				return ctrl.Result{}, fmt.Errorf("error updating topic config for topic %s: %w", name, err)
 			} else if updated {
 				topic.Status.State = cskafkav1alpha1.TopicStateInProgress
+				topic.Status.PendingGeneration = topic.Generation
+				topic.Status.PendingSince = &now
 				topic.Status.SetReadyCondition(metav1.ConditionFalse, cskafkav1alpha1.TopicReadyReasonProcessing, "Topic updated successfully")
 				return ctrl.Result{RequeueAfter: 100 * time.Millisecond}, nil
 			}
@@ -258,12 +297,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (resul
 		}
 	} else {
 		// delete case
-		if tp != nil {
-			if err := cli.DeleteTopic(ctx, name); err != nil {
-				return ctrl.Result{}, fmt.Errorf("error deleting topic %s: %w", name, err)
+		if tpExists {
+			if topic.Status.State != cskafkav1alpha1.TopicStateDeleting {
+				if err := cli.DeleteTopic(ctx, name); err != nil {
+					return ctrl.Result{}, fmt.Errorf("error deleting topic %s: %w", name, err)
+				}
+				topic.Status.State = cskafkav1alpha1.TopicStateDeleting
+				topic.Status.SetReadyCondition(metav1.ConditionFalse, cskafkav1alpha1.TopicReadyReasonDeleting, "Topic deleted successfully")
 			}
-			topic.Status.State = cskafkav1alpha1.TopicStateDeleting
-			topic.Status.SetReadyCondition(metav1.ConditionFalse, cskafkav1alpha1.TopicReadyReasonDeleting, "Topic deleted successfully")
 			return ctrl.Result{RequeueAfter: 100 * time.Millisecond}, nil
 		} else {
 			if controllerutil.RemoveFinalizer(topic, r.finalizer) {
