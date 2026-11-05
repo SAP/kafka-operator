@@ -6,9 +6,14 @@ SPDX-License-Identifier: Apache-2.0
 package franz
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -16,6 +21,16 @@ import (
 	"github.com/twmb/franz-go/pkg/sasl/scram"
 
 	"github.com/sap/kafka-operator/pkg/api"
+)
+
+type CachedAdminClientItem struct {
+	cli        *kadm.Client
+	lastUsedAt time.Time
+}
+
+var (
+	mu                 sync.Mutex
+	cachedAdminClients = make(map[string]*CachedAdminClientItem)
 )
 
 func newClient(id string, connectionDetails *api.ConnectionDetails) (*kgo.Client, error) {
@@ -64,4 +79,53 @@ func newAdminClient(id string, connectionDetails *api.ConnectionDetails) (*kadm.
 		return nil, err
 	}
 	return kadm.NewClient(cli), nil
+}
+
+func getCachedAdminClient(id string, connectionDetails *api.ConnectionDetails) (*kadm.Client, error) {
+	digest := calculateDigest(id, connectionDetails)
+	mu.Lock()
+	defer mu.Unlock()
+
+	now := time.Now()
+
+	if item, ok := cachedAdminClients[digest]; ok {
+		item.lastUsedAt = now
+		return item.cli, nil
+	}
+
+	cli, err := newAdminClient(id, connectionDetails)
+	if err != nil {
+		return nil, err
+	}
+	cachedAdminClients[digest] = &CachedAdminClientItem{
+		cli:        cli,
+		lastUsedAt: now,
+	}
+	return cli, nil
+}
+
+func calculateDigest(values ...any) string {
+	raw, err := json.Marshal(values)
+	if err != nil {
+		panic(fmt.Sprintf("this should never happen: %v", err))
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func init() {
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			mu.Lock()
+			now := time.Now()
+			for digest, item := range cachedAdminClients {
+				if now.Sub(item.lastUsedAt) > 6*time.Hour {
+					delete(cachedAdminClients, digest)
+				}
+			}
+			mu.Unlock()
+		}
+	}()
 }
