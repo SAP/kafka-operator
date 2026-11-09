@@ -3,7 +3,7 @@ module github.com/sap/kafka-operator
 go 1.27.3
 
 require (
-	github.com/sap/go-generics v0.2.79
+	github.com/sap/go-generics v0.2.80
 	github.com/spf13/pflag v1.0.10
 	github.com/twmb/franz-go v1.21.0
 	github.com/twmb/franz-go/pkg/kadm v1.18.0
