@@ -1,6 +1,6 @@
 module github.com/sap/kafka-operator
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/sap/go-generics v0.2.80
