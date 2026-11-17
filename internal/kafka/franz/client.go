@@ -13,7 +13,7 @@ import (
 	"github.com/sap/go-generics/maps"
 	"github.com/sap/go-generics/slices"
 	"github.com/twmb/franz-go/pkg/kadm"
-	"github.com/twmb/franz-go/pkg/kmsg"
+	"github.com/twmb/franz-go/pkg/kmsg/v2"
 
 	"github.com/sap/kafka-operator/internal/kafka"
 	"github.com/sap/kafka-operator/pkg/api"
